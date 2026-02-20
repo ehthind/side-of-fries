@@ -25,3 +25,4 @@
 - 2026-02-20: Added invoice, escalation, legal packet, template, billing, and webhook API routes.
 - 2026-02-20: Shipped frontend experience: landing page, onboarding wizard, dashboard, invoice timeline, and template studio.
 - 2026-02-20: Verified `npm run lint` and `npm run build` pass.
+- 2026-02-20: Connected remote `https://github.com/ehthind/side-of-fries` and reconciled unrelated root histories safely.
