@@ -18,12 +18,18 @@ type UntypedDatabase = {
   };
 };
 
+export type AppSupabaseClient = SupabaseClient<UntypedDatabase>;
+
 let supabaseServiceSingleton:
-  | SupabaseClient<UntypedDatabase>
+  | AppSupabaseClient
   | undefined
   | null = undefined;
 
-export function getSupabaseServiceClient(): SupabaseClient<UntypedDatabase> | null {
+export function hasSupabaseUserConfig(): boolean {
+  return Boolean(env.NEXT_PUBLIC_SUPABASE_URL && env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+}
+
+export function getSupabaseServiceClient(): AppSupabaseClient | null {
   if (!hasSupabaseConfig()) {
     return null;
   }
@@ -42,4 +48,28 @@ export function getSupabaseServiceClient(): SupabaseClient<UntypedDatabase> | nu
   }
 
   return supabaseServiceSingleton;
+}
+
+export function createSupabaseUserClient(
+  accessToken: string,
+): AppSupabaseClient | null {
+  if (!accessToken || !hasSupabaseUserConfig()) {
+    return null;
+  }
+
+  return createClient<UntypedDatabase>(
+    env.NEXT_PUBLIC_SUPABASE_URL!,
+    env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    },
+  );
 }

@@ -52,6 +52,8 @@ cp .env.example .env.local
 ```
 
 3. Add Supabase and provider keys in `.env.local`.
+   - For authenticated API access with RLS, include `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+   - Service-role key remains server-only and is used as fallback when no user token is present.
 
 4. Run development server:
 ```bash
@@ -89,5 +91,6 @@ Both currently pass.
 ## Notes
 
 - If Supabase env vars are missing, the app uses an in-memory fallback store so flows still work in local demo mode.
+- API routes accept Supabase bearer tokens (or Supabase auth cookies) and will run repository calls through an RLS-scoped user client when available.
 - Stripe/Twilio also run in mock mode when not configured.
 - The product is intentionally conservative in legal tone and includes template-level disclaimer language.

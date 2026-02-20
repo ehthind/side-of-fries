@@ -4,7 +4,10 @@ import {
   ESCALATION_STAGE_ORDER,
   MESSAGE_TEMPLATES,
 } from "@/lib/constants";
-import { getSupabaseServiceClient } from "@/lib/db/supabase";
+import {
+  getSupabaseServiceClient,
+  type AppSupabaseClient,
+} from "@/lib/db/supabase";
 import { getMockStore } from "@/lib/db/mock";
 import type {
   Client,
@@ -44,6 +47,21 @@ interface PreviewContext {
   days_overdue: string;
   target_date: string;
   workspace_name: string;
+}
+
+export interface RepositoryContext {
+  actorEmail?: string | null;
+  supabase?: AppSupabaseClient | null;
+}
+
+function resolveSupabaseClient(
+  context?: RepositoryContext,
+): AppSupabaseClient | null {
+  if (context?.supabase) {
+    return context.supabase;
+  }
+
+  return getSupabaseServiceClient();
 }
 
 function relationValue<T>(value: T | T[] | null | undefined): T | null {
@@ -209,8 +227,11 @@ function mapLegalPacketRow(row: Record<string, unknown>): LegalPacket {
   };
 }
 
-async function ensureWorkspaceBySlug(workspaceSlug: string): Promise<Workspace> {
-  const supabase = getSupabaseServiceClient();
+async function ensureWorkspaceBySlug(
+  workspaceSlug: string,
+  context?: RepositoryContext,
+): Promise<Workspace> {
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const slug = workspaceSlug || DEFAULT_WORKSPACE_SLUG;
@@ -243,6 +264,9 @@ async function ensureWorkspaceBySlug(workspaceSlug: string): Promise<Workspace> 
       .single();
 
     if (inserted.error) {
+      if (inserted.error.code === "23505") {
+        throw new Error("Workspace already exists but is not accessible.");
+      }
       throw new Error(inserted.error.message);
     }
 
@@ -283,13 +307,16 @@ async function ensureWorkspaceBySlug(workspaceSlug: string): Promise<Workspace> 
   return created;
 }
 
-async function ensureClient(input: {
-  workspaceId: string;
-  clientName: string;
-  clientEmail?: string;
-  clientPhone?: string;
-}): Promise<Client> {
-  const supabase = getSupabaseServiceClient();
+async function ensureClient(
+  input: {
+    workspaceId: string;
+    clientName: string;
+    clientEmail?: string;
+    clientPhone?: string;
+  },
+  context?: RepositoryContext,
+): Promise<Client> {
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const existing = await supabase
@@ -348,8 +375,11 @@ async function ensureClient(input: {
   return client;
 }
 
-async function ensureEscalationRun(invoiceId: string): Promise<EscalationRun> {
-  const supabase = getSupabaseServiceClient();
+async function ensureEscalationRun(
+  invoiceId: string,
+  context?: RepositoryContext,
+): Promise<EscalationRun> {
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const existing = await supabase
@@ -403,8 +433,11 @@ async function ensureEscalationRun(invoiceId: string): Promise<EscalationRun> {
   return run;
 }
 
-async function getWorkspaceById(workspaceId: string): Promise<Workspace> {
-  const supabase = getSupabaseServiceClient();
+async function getWorkspaceById(
+  workspaceId: string,
+  context?: RepositoryContext,
+): Promise<Workspace> {
+  const supabase = resolveSupabaseClient(context);
   if (supabase) {
     const row = await supabase
       .from("workspaces")
@@ -430,9 +463,10 @@ async function getWorkspaceById(workspaceId: string): Promise<Workspace> {
 
 export async function listInvoices(
   workspaceSlug = DEFAULT_WORKSPACE_SLUG,
+  context?: RepositoryContext,
 ): Promise<InvoiceWithRelations[]> {
-  const workspace = await ensureWorkspaceBySlug(workspaceSlug);
-  const supabase = getSupabaseServiceClient();
+  const workspace = await ensureWorkspaceBySlug(workspaceSlug, context);
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const rows = await supabase
@@ -504,8 +538,9 @@ export async function listInvoices(
 
 export async function getInvoiceById(
   invoiceId: string,
+  context?: RepositoryContext,
 ): Promise<InvoiceWithRelations | null> {
-  const supabase = getSupabaseServiceClient();
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const invoiceRow = await supabase
@@ -630,16 +665,17 @@ export async function getInvoiceById(
 
 export async function createInvoice(
   input: CreateInvoiceInput,
+  context?: RepositoryContext,
 ): Promise<InvoiceWithRelations> {
-  const workspace = await ensureWorkspaceBySlug(input.workspaceSlug);
+  const workspace = await ensureWorkspaceBySlug(input.workspaceSlug, context);
   const client = await ensureClient({
     workspaceId: workspace.id,
     clientName: input.clientName,
     clientEmail: input.clientEmail,
     clientPhone: input.clientPhone,
-  });
+  }, context);
 
-  const supabase = getSupabaseServiceClient();
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const inserted = await supabase
@@ -666,9 +702,9 @@ export async function createInvoice(
 
     const invoice = mapInvoiceRow(inserted.data as Record<string, unknown>);
 
-    await ensureEscalationRun(invoice.id);
+    await ensureEscalationRun(invoice.id, context);
 
-    const detail = await getInvoiceById(invoice.id);
+    const detail = await getInvoiceById(invoice.id, context);
     if (!detail) {
       throw new Error("Unable to load created invoice.");
     }
@@ -694,9 +730,9 @@ export async function createInvoice(
   };
 
   store.invoices.push(invoice);
-  await ensureEscalationRun(invoice.id);
+  await ensureEscalationRun(invoice.id, context);
 
-  const detail = await getInvoiceById(invoice.id);
+  const detail = await getInvoiceById(invoice.id, context);
   if (!detail) {
     throw new Error("Unable to load created invoice.");
   }
@@ -706,6 +742,7 @@ export async function createInvoice(
 export async function importCsvInvoices(
   workspaceSlug: string,
   rows: CsvInvoiceRow[],
+  context?: RepositoryContext,
 ): Promise<{ created: number; failed: Array<{ row: number; reason: string }> }> {
   let created = 0;
   const failed: Array<{ row: number; reason: string }> = [];
@@ -733,7 +770,7 @@ export async function importCsvInvoices(
         dueDate: row.dueDate,
         issueDate: row.issueDate,
         notes: row.notes,
-      });
+      }, context);
 
       created += 1;
     } catch (error) {
@@ -752,20 +789,25 @@ export async function importCsvInvoices(
 
 export async function previewEscalationStep(
   invoiceId: string,
+  context?: RepositoryContext,
 ): Promise<EscalationPreview> {
-  const detail = await getInvoiceById(invoiceId);
+  const detail = await getInvoiceById(invoiceId, context);
   if (!detail) {
     throw new Error("Invoice not found.");
   }
 
-  const workspace = await getWorkspaceById(detail.invoice.workspaceId);
+  const workspace = await getWorkspaceById(detail.invoice.workspaceId, context);
   const stage = determineNextStage(detail);
-  const context = buildPreviewContext(detail.invoice, detail.client, workspace);
+  const previewContext = buildPreviewContext(
+    detail.invoice,
+    detail.client,
+    workspace,
+  );
   const emailBody = detail.client.primaryEmail
-    ? renderTemplate(MESSAGE_TEMPLATES[stage].email, context)
+    ? renderTemplate(MESSAGE_TEMPLATES[stage].email, previewContext)
     : undefined;
   const smsBody = detail.client.primaryPhone
-    ? renderTemplate(MESSAGE_TEMPLATES[stage].sms, context)
+    ? renderTemplate(MESSAGE_TEMPLATES[stage].sms, previewContext)
     : undefined;
 
   return {
@@ -777,14 +819,17 @@ export async function previewEscalationStep(
   };
 }
 
-export async function approveEscalationStep(invoiceId: string) {
-  const preview = await previewEscalationStep(invoiceId);
-  const detail = await getInvoiceById(invoiceId);
+export async function approveEscalationStep(
+  invoiceId: string,
+  context?: RepositoryContext,
+) {
+  const preview = await previewEscalationStep(invoiceId, context);
+  const detail = await getInvoiceById(invoiceId, context);
   if (!detail) {
     throw new Error("Invoice not found.");
   }
 
-  const run = await ensureEscalationRun(invoiceId);
+  const run = await ensureEscalationRun(invoiceId, context);
   const now = new Date().toISOString();
   const channels: Array<{ channel: MessageChannel; body: string }> = [];
 
@@ -796,7 +841,7 @@ export async function approveEscalationStep(invoiceId: string) {
     channels.push({ channel: "sms", body: preview.smsBody });
   }
 
-  const supabase = getSupabaseServiceClient();
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const runUpdate = await supabase
@@ -861,7 +906,7 @@ export async function approveEscalationStep(invoiceId: string) {
 
     await supabase.from("audit_logs").insert({
       workspace_id: detail.invoice.workspaceId,
-      actor_email: "system",
+      actor_email: context?.actorEmail ?? "system",
       action: "approve_escalation_step",
       entity_type: "invoice",
       entity_id: invoiceId,
@@ -871,7 +916,7 @@ export async function approveEscalationStep(invoiceId: string) {
       },
     });
 
-    return getInvoiceById(invoiceId);
+    return getInvoiceById(invoiceId, context);
   }
 
   const store = getMockStore();
@@ -937,18 +982,21 @@ export async function approveEscalationStep(invoiceId: string) {
     };
   }
 
-  return getInvoiceById(invoiceId);
+  return getInvoiceById(invoiceId, context);
 }
 
-export async function pauseEscalation(invoiceId: string) {
-  const detail = await getInvoiceById(invoiceId);
+export async function pauseEscalation(
+  invoiceId: string,
+  context?: RepositoryContext,
+) {
+  const detail = await getInvoiceById(invoiceId, context);
   if (!detail) {
     throw new Error("Invoice not found.");
   }
 
-  const run = await ensureEscalationRun(invoiceId);
+  const run = await ensureEscalationRun(invoiceId, context);
   const now = new Date().toISOString();
-  const supabase = getSupabaseServiceClient();
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const runUpdate = await supabase
@@ -970,7 +1018,7 @@ export async function pauseEscalation(invoiceId: string) {
       throw new Error(invoiceUpdate.error.message);
     }
 
-    return getInvoiceById(invoiceId);
+    return getInvoiceById(invoiceId, context);
   }
 
   const store = getMockStore();
@@ -992,18 +1040,21 @@ export async function pauseEscalation(invoiceId: string) {
     };
   }
 
-  return getInvoiceById(invoiceId);
+  return getInvoiceById(invoiceId, context);
 }
 
-export async function markInvoicePaid(invoiceId: string) {
-  const detail = await getInvoiceById(invoiceId);
+export async function markInvoicePaid(
+  invoiceId: string,
+  context?: RepositoryContext,
+) {
+  const detail = await getInvoiceById(invoiceId, context);
   if (!detail) {
     throw new Error("Invoice not found.");
   }
 
-  const run = await ensureEscalationRun(invoiceId);
+  const run = await ensureEscalationRun(invoiceId, context);
   const now = new Date().toISOString();
-  const supabase = getSupabaseServiceClient();
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const invoiceUpdate = await supabase
@@ -1026,14 +1077,14 @@ export async function markInvoicePaid(invoiceId: string) {
 
     await supabase.from("audit_logs").insert({
       workspace_id: detail.invoice.workspaceId,
-      actor_email: "system",
+      actor_email: context?.actorEmail ?? "system",
       action: "mark_invoice_paid",
       entity_type: "invoice",
       entity_id: invoiceId,
       payload: {},
     });
 
-    return getInvoiceById(invoiceId);
+    return getInvoiceById(invoiceId, context);
   }
 
   const store = getMockStore();
@@ -1055,19 +1106,20 @@ export async function markInvoicePaid(invoiceId: string) {
     };
   }
 
-  return getInvoiceById(invoiceId);
+  return getInvoiceById(invoiceId, context);
 }
 
 export async function generateLegalPacket(
   invoiceId: string,
   jurisdiction: string,
+  context?: RepositoryContext,
 ): Promise<LegalPacket> {
-  const detail = await getInvoiceById(invoiceId);
+  const detail = await getInvoiceById(invoiceId, context);
   if (!detail) {
     throw new Error("Invoice not found.");
   }
 
-  const workspace = await getWorkspaceById(detail.invoice.workspaceId);
+  const workspace = await getWorkspaceById(detail.invoice.workspaceId, context);
   const daysOverdue = computeDaysOverdue(detail.invoice.dueDate);
   const content = [
     "Small-Claims Preparation Template",
@@ -1089,7 +1141,7 @@ export async function generateLegalPacket(
   ].join("\n");
 
   const now = new Date().toISOString();
-  const supabase = getSupabaseServiceClient();
+  const supabase = resolveSupabaseClient(context);
 
   if (supabase) {
     const packet = await supabase
@@ -1138,8 +1190,9 @@ export async function generateLegalPacket(
 
 export async function getDashboardStats(
   workspaceSlug = DEFAULT_WORKSPACE_SLUG,
+  context?: RepositoryContext,
 ): Promise<DashboardStats> {
-  const invoices = await listInvoices(workspaceSlug);
+  const invoices = await listInvoices(workspaceSlug, context);
   const now = new Date();
   const month = now.getMonth();
   const year = now.getFullYear();

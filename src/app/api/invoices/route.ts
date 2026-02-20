@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { resolveRepositoryAuth } from "@/lib/auth/request-auth";
 import { DEFAULT_WORKSPACE_SLUG } from "@/lib/constants";
 import { createInvoice, listInvoices } from "@/lib/db/repository";
 
@@ -21,7 +22,18 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("workspaceSlug") ?? DEFAULT_WORKSPACE_SLUG;
 
   try {
-    const invoices = await listInvoices(workspaceSlug);
+    const auth = await resolveRepositoryAuth(request);
+    if (auth.authError) {
+      return NextResponse.json(
+        {
+          error: "Unauthorized.",
+          details: auth.authError,
+        },
+        { status: 401 },
+      );
+    }
+
+    const invoices = await listInvoices(workspaceSlug, auth.context);
     return NextResponse.json({
       workspaceSlug,
       count: invoices.length,
@@ -40,9 +52,20 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await resolveRepositoryAuth(request);
+    if (auth.authError) {
+      return NextResponse.json(
+        {
+          error: "Unauthorized.",
+          details: auth.authError,
+        },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
     const payload = createInvoiceSchema.parse(body);
-    const created = await createInvoice(payload);
+    const created = await createInvoice(payload, auth.context);
 
     return NextResponse.json({
       invoice: created,

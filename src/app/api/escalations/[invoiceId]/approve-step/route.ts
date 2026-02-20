@@ -1,13 +1,25 @@
 import { NextResponse } from "next/server";
+import { resolveRepositoryAuth } from "@/lib/auth/request-auth";
 import { approveEscalationStep } from "@/lib/db/repository";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ invoiceId: string }> },
 ) {
   try {
+    const auth = await resolveRepositoryAuth(request);
+    if (auth.authError) {
+      return NextResponse.json(
+        {
+          error: "Unauthorized.",
+          details: auth.authError,
+        },
+        { status: 401 },
+      );
+    }
+
     const { invoiceId } = await context.params;
-    const invoice = await approveEscalationStep(invoiceId);
+    const invoice = await approveEscalationStep(invoiceId, auth.context);
 
     return NextResponse.json({
       invoice,

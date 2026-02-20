@@ -1,6 +1,7 @@
 import Papa from "papaparse";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { resolveRepositoryAuth } from "@/lib/auth/request-auth";
 import { DEFAULT_WORKSPACE_SLUG } from "@/lib/constants";
 import { importCsvInvoices } from "@/lib/db/repository";
 
@@ -11,6 +12,17 @@ const importSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await resolveRepositoryAuth(request);
+    if (auth.authError) {
+      return NextResponse.json(
+        {
+          error: "Unauthorized.",
+          details: auth.authError,
+        },
+        { status: 401 },
+      );
+    }
+
     const raw = await request.json();
     const payload = importSchema.parse(raw);
 
@@ -43,7 +55,7 @@ export async function POST(request: NextRequest) {
       notes: row.notes,
     }));
 
-    const results = await importCsvInvoices(payload.workspaceSlug, rows);
+    const results = await importCsvInvoices(payload.workspaceSlug, rows, auth.context);
 
     return NextResponse.json({
       workspaceSlug: payload.workspaceSlug,
